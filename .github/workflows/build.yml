@@ -8,7 +8,7 @@ on:
         required: false
         default: '6.6'
   schedule:
-    - cron: '0 3 * * *'
+    - cron: '0 3 * * *'   # 每天凌晨自动构建
   push:
     branches:
       - main
@@ -16,6 +16,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,15 +25,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-sudo apt install -y build-essential ccache libncurses5-dev libz-dev \
-  gawk git gettext libssl-dev python3 python3-pip python3-setuptools rsync unzip wget \
-  subversion flex bison file
+          sudo apt update
+          sudo apt install -y build-essential ccache libncurses5-dev libz-dev \
+            gawk git gettext libssl-dev python3 python3-pip python3-setuptools rsync unzip wget \
+            subversion flex bison file
 
-# 补装 distutils（部分系统需）
-if ! python3 -m ensurepip --default-pip >/dev/null 2>&1; then
-  sudo apt install -y python3-venv || true
-fi
-
+          # 补装 distutils（部分系统需）
+          if ! python3 -m ensurepip --default-pip >/dev/null 2>&1; then
+            sudo apt install -y python3-venv || true
+          fi
 
       - name: Add swap
         run: |
