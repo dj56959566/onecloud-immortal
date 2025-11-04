@@ -17,3 +17,10 @@
 3. 编译完成后在 Artifacts 下载镜像：
    - `*sdcard.img.gz` → U 盘启动版  
    - `*sysupgrade.bin` → 线刷升级版
+
+================================================================================
+玩客云u-boot https://github.com/hzyitc/u-boot-onecloud
+
+线刷包打包工具 https://github.com/hzyitc/AmlImg
+此人作品也不错 https://github.com/shiyu1314/openwrt-onecloud
+所有为openwrt做出贡献的人
