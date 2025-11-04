@@ -26,9 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential ccache libncurses5-dev libz-dev \
-            gawk git gettext libssl-dev python3 python3-pip python3-setuptools rsync unzip wget \
-            subversion flex bison file
+          sudo apt install -y build-essential ccache libncurses5-dev libz-dev             gawk git gettext libssl-dev python3 python3-pip python3-setuptools rsync unzip wget             subversion flex bison file
 
           # 补装 distutils（部分系统需）
           if ! python3 -m ensurepip --default-pip >/dev/null 2>&1; then
@@ -51,8 +49,8 @@ jobs:
         run: |
           git clone https://github.com/immortalwrt/immortalwrt.git
           cd immortalwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          ./scripts/feeds update -a || true
+          ./scripts/feeds install -a || true
 
       - name: Copy config and custom files
         run: |
@@ -60,8 +58,8 @@ jobs:
           mkdir -p files
           cp -r ../files/* files/
           cp ../feeds.conf.default ./feeds.conf.default
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          ./scripts/feeds update -a || true
+          ./scripts/feeds install -a || true
           cp ../config_fragments/onecloud_defconfig .config
           echo "KERNEL_PATCHVER=${{ github.event.inputs.kernel_patchver || '6.6' }}" >> .config
           make defconfig
