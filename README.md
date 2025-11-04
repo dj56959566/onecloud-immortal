@@ -4,7 +4,7 @@
 
 ### ✨ 特点
 - 适配 OneCloud ARMv7
-- 插件：OpenClash、Nikki、Docker、Netdata、文件传输、网页终端、定时任务
+- 插件：Docker、Netdata、文件传输、网页终端、定时任务
 - 固定 IP：`192.168.2.2` / 网关：`192.168.2.1`
 - 关闭 DHCP
 - 内核在线升级支持（系统 → 软件包 / 系统升级）
