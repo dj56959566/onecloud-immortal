@@ -8,7 +8,7 @@ on:
         required: false
         default: '6.6'
   schedule:
-    - cron: '0 3 * * *'   # 每天凌晨自动构建
+    - cron: '0 3 * * *'
   push:
     branches:
       - main
@@ -41,6 +41,11 @@ jobs:
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
+
+      - name: Clean old feeds cache
+        run: |
+          rm -rf tmp/feeds
+          rm -rf tmp/.packageinfo
 
       - name: Clone ImmortalWrt
         run: |
