@@ -1,6 +1,3 @@
-# onecloud-immortal
-immortalwrt 玩客云 armv7 32位
-
 # OneCloud ImmortalWrt Auto Builder
 
 自动构建基于 **ImmortalWrt (ARMv7)** 的 OneCloud 固件。
