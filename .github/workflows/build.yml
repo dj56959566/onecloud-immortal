@@ -1,0 +1,66 @@
+name: Build ImmortalWrt OneCloud (ARMv7)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_patchver:
+        description: 'Kernel patch version (e.g. 6.6)'
+        required: false
+        default: '6.6'
+  schedule:
+    - cron: '0 3 * * *'
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential ccache libncurses5-dev libz-dev             gawk git gettext libssl-dev python3 python3-distutils rsync unzip wget             subversion flex bison file
+
+      - name: Add swap
+        run: |
+          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+
+      - name: Clone ImmortalWrt
+        run: |
+          git clone https://github.com/immortalwrt/immortalwrt.git
+          cd immortalwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: Copy config and custom files
+        run: |
+          cd immortalwrt
+          mkdir -p files
+          cp -r ../files/* files/
+          cp ../feeds.conf.default ./feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          cp ../config_fragments/onecloud_defconfig .config
+          echo "KERNEL_PATCHVER=${{ github.event.inputs.kernel_patchver || '6.6' }}" >> .config
+          make defconfig
+
+      - name: Build
+        run: |
+          cd immortalwrt
+          make download -j8
+          make -j$(nproc) V=s
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OneCloud-ImmortalWrt-${{ github.run_number }}
+          path: immortalwrt/bin/targets/**/*
