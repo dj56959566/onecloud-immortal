@@ -10,9 +10,6 @@ CONFIG_PACKAGE_dropbear=y
 CONFIG_PACKAGE_busybox=y
 
 # 插件
-CONFIG_PACKAGE_luci-app-nikki=y
-CONFIG_PACKAGE_nikki=y
-CONFIG_PACKAGE_luci-app-openclash=y
 CONFIG_PACKAGE_docker=y
 CONFIG_PACKAGE_dockerd=y
 CONFIG_PACKAGE_luci-app-dockerman=y
@@ -32,6 +29,3 @@ CONFIG_PACKAGE_kmodloader=y
 CONFIG_REMOVE_FAILED_PACKAGES=y
 CONFIG_ALL_KMODS=n
 CONFIG_ALL_NONSHARED=n
-
-# OpenClash 只安装 luci-app，避免 merge 阶段失败
-CONFIG_PACKAGE_openclash-core=n
