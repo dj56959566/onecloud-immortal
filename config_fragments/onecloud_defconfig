@@ -1,17 +1,18 @@
 CONFIG_TARGET_sunxi=y
 CONFIG_TARGET_sunxi_cortexa7=y
 CONFIG_TARGET_sunxi_cortexa7_DEVICE_onecloud=y
-
 CONFIG_TARGET_OPTIMIZATION="-Os -pipe -mcpu=cortex-a7"
 
+# 基础系统
 CONFIG_PACKAGE_luci=y
 CONFIG_PACKAGE_luci-ssl=y
 CONFIG_PACKAGE_dropbear=y
 CONFIG_PACKAGE_busybox=y
 
-CONFIG_PACKAGE_luci-app-openclash=y
+# 插件
 CONFIG_PACKAGE_luci-app-nikki=y
 CONFIG_PACKAGE_nikki=y
+CONFIG_PACKAGE_luci-app-openclash=y
 CONFIG_PACKAGE_docker=y
 CONFIG_PACKAGE_dockerd=y
 CONFIG_PACKAGE_luci-app-dockerman=y
@@ -27,6 +28,10 @@ CONFIG_PACKAGE_luci-app-attendedsysupgrade=y
 CONFIG_PACKAGE_sysupgrade-helper=y
 CONFIG_PACKAGE_kmodloader=y
 
+# 移除不必要工具
 CONFIG_REMOVE_FAILED_PACKAGES=y
 CONFIG_ALL_KMODS=n
 CONFIG_ALL_NONSHARED=n
+
+# OpenClash 只安装 luci-app，避免 merge 阶段失败
+CONFIG_PACKAGE_openclash-core=n
