@@ -78,4 +78,20 @@ jobs:
           echo "KERNEL_PATCHVER=${{ github.event.inputs.kernel_patchver || '6.6' }}" >> .config
           make defconfig
 
-      - name: Build
+      - name: Build Firmware
+        run: |
+          cd immortalwrt
+          make download -j8
+          make -j1 V=s
+
+      - name: Compress Firmware
+        run: |
+          cd immortalwrt/bin/targets
+          tar -czf ../../../../OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz .
+          du -sh ../../../../OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz
+
+      - name: Upload Firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: OneCloud-ImmortalWrt-${{ github.run_number }}
+          path: OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz
