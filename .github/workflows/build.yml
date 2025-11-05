@@ -1,96 +1,142 @@
-name: Build OneCloud ImmortalWrt
-
+name: build-onecloud-immortal
 on:
-  workflow_dispatch:
-    inputs:
-      kernel_update:
-        description: "是否使用最新版内核？(yes/no)"
-        required: false
-        default: "no"
   schedule:
-    - cron: "0 16 * * *"   # 每天北京时间 00:00（UTC+8）
+    # 每日北京时间 00:00 -> UTC 16:00
+    - cron: '0 16 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  issues: write
+  packages: write
+  statuses: write
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, onecloud-builder]
+    env:
+      TZ: Asia/Shanghai
+      BUILD_KERNEL_VERSION: '6.6'
+      TARGET_ARCH: 'arm'
+      OUTPUT_DIR: output
+      BUILD_DIR: /mnt/build/immortalwrt
 
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Initialize Build Environment
+      - name: Setup cache for ccache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .ccache
+            dl
+            build_dir
+          key: ${{ runner.os }}-immortal-${{ env.BUILD_KERNEL_VERSION }}-${{ hashFiles('config/seed.config','scripts/diy.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-immortal-${{ env.BUILD_KERNEL_VERSION }}-
+
+      - name: Show runner disk
+        run: df -h || true
+
+      - name: Install build deps
         run: |
           sudo apt-get update
-          sudo apt-get install -y git wget curl unzip build-essential ccache
-          echo "✅ 构建环境已初始化"
+          sudo apt-get -y install build-essential libncurses5-dev gawk git gettext libssl-dev xsltproc rsync unzip python3 python3-distutils 
 
-      - name: Clone ImmortalWrt Source
+      - name: Clone ImmortalWrt official source
         run: |
-          git clone https://github.com/immortalwrt/immortalwrt.git openwrt
-          cd openwrt
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          rm -rf immortalwrt
+          git clone --depth 1 https://github.com/immortalwrt/immortalwrt.git
+          cd immortalwrt
+          git checkout master || true
 
-      - name: Apply custom diy.sh
+      - name: Prepare build dir on runner
         run: |
-          chmod +x scripts/diy.sh
-          ./scripts/diy.sh
+          sudo mkdir -p "${{ env.BUILD_DIR }}"
+          sudo chown $USER:$USER "${{ env.BUILD_DIR }}"
+          mkdir -p "${{ env.OUTPUT_DIR }}"
+          df -h "${{ env.BUILD_DIR }}" || true
 
-      - name: Use seed config safely
+      - name: Prepare feeds and custom config
         run: |
-          echo "当前目录: $(pwd)"
-          if [ -f "$GITHUB_WORKSPACE/config/seed.config" ]; then
-            echo "✅ 找到 seed.config 于仓库根目录"
-            cp "$GITHUB_WORKSPACE/config/seed.config" openwrt/.config
-          elif [ -f "config/seed.config" ]; then
-            echo "✅ 找到 seed.config 于当前目录"
-            cp "config/seed.config" openwrt/.config
-          else
-            echo "⚠️ 未找到 seed.config，将使用默认配置"
+          cd immortalwrt
+          mkdir -p config
+          cp ../config/seed.config .
+
+      - name: Apply diy customizations
+        run: |
+          cd immortalwrt
+          chmod +x ../scripts/diy.sh
+          ../scripts/diy.sh ${BUILD_KERNEL_VERSION}
+
+      - name: Build firmware
+        run: |
+          cd immortalwrt
+          make -j$(nproc) V=s || (echo 'Build failed — check logs' && exit 1)
+        env:
+          MAKEFLAGS: -j$(nproc)
+
+      - name: Collect artifacts and pack
+        run: |
+          cd immortalwrt
+          mkdir -p ../${{ env.OUTPUT_DIR }}
+          find bin/targets -type f -name '*sysupgrade*.bin' -o -name '*sdcard*.img' -print | while read f; do
+            base=$(basename "$f")
+            if echo "$base" | grep -i sdcard >/dev/null 2>&1; then
+              cp "$f" ../${{ env.OUTPUT_DIR }}/onecloud-immortal-udisk-${base}
+            else
+              cp "$f" ../${{ env.OUTPUT_DIR }}/onecloud-immortal-flash-${base}
+            fi
+          done
+
+          cd ../${{ env.OUTPUT_DIR }}
+          mkdir -p udbuf flashbuf
+          mv *udisk-* udbuf/ 2>/dev/null || true
+          mv *flash-* flashbuf/ 2>/dev/null || true
+          if [ -d udbuf ] && [ "$(ls -A udbuf)" ]; then
+            zip -r onecloud-immortal-udisk.zip udbuf || true
           fi
+          if [ -d flashbuf ] && [ "$(ls -A flashbuf)" ]; then
+            zip -r onecloud-immortal-flash.zip flashbuf || true
+          fi
+          zip -r onecloud-immortal.zip *.zip || true
 
-      - name: Update Kernel (optional)
-        if: ${{ github.event.inputs.kernel_update == 'yes' }}
-        run: |
-          cd openwrt
-          echo "🔁 手动更新内核中..."
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          make defconfig
-
-      - name: Build Firmware
-        run: |
-          cd openwrt
-          make -j$(nproc) || make -j1 V=s
-
-      - name: Package Firmware
-        run: |
-          cd openwrt/bin/targets/*/*
-          mkdir -p $GITHUB_WORKSPACE/output
-          echo "📦 打包线刷版与U盘版固件..."
-          zip -r $GITHUB_WORKSPACE/output/OneCloud_ImmortalWrt_Line.zip *factory*.bin || true
-          zip -r $GITHUB_WORKSPACE/output/OneCloud_ImmortalWrt_USB.zip *sysupgrade*.bin || true
-          echo "✅ 打包完成"
-
-      - name: Release Firmware
-        uses: softprops/action-gh-release@v2
+      - name: Create / update release and upload assets
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: latest
-          name: "OneCloud ImmortalWrt 自动构建版"
+          tag_name: "build-${{ github.run_id }}"
+          name: "onecloud-immortal-${{ github.run_id }}"
           body: |
-            ### 固件说明
-            - 线刷版：用于 USB 直刷或初次安装
-            - U盘版：用于升级或外接启动
-            - 每日自动构建北京时间 00:00
-          files: |
-            output/*.zip
+            自动构建（onecloud-immortal）
+            - 内核: ${{ env.BUILD_KERNEL_VERSION }}
+            - 平台: OneCloud ARMv7
+            - 时间: ${{ github.event.head_commit.timestamp || github.run_id }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cleanup Old Releases
-        uses: dev-drprasad/delete-older-releases@v0.3.3
+      - name: Upload build artifacts to release
+        uses: actions/upload-release-asset@v2
         with:
-          keep_latest: 1
-          delete_tags: true
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./${{ env.OUTPUT_DIR }}/onecloud-immortal.zip
+          asset_name: onecloud-immortal.zip
+          asset_content_type: application/zip
+
+      - name: Cleanup old releases (only keep latest)
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const latest = await github.rest.repos.getLatestRelease({owner: context.repo.owner, repo: context.repo.repo}).catch(e=>null)
+            if (latest && latest.data && latest.data.id) {
+              const releases = await github.rest.repos.listReleases({owner: context.repo.owner, repo: context.repo.repo})
+              for (const r of releases.data) {
+                if (r.id !== latest.data.id) {
+                  await github.rest.repos.deleteRelease({owner: context.repo.owner, repo: context.repo.repo, release_id: r.id})
+                }
+              }
+            }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
