@@ -64,7 +64,14 @@ jobs:
         run: |
           cd openwrt
           if [ -f custom/config/seed.config ]; then
+            echo "✅ 使用自定义 seed.config"
             cp custom/config/seed.config .config
+          elif [ -f ../config/seed.config ]; then
+            echo "✅ 使用上级 config/seed.config"
+            cp ../config/seed.config .config
+          elif [ -f $GITHUB_WORKSPACE/config/seed.config ]; then
+            echo "✅ 使用仓库根目录 config/seed.config"
+            cp $GITHUB_WORKSPACE/config/seed.config .config
           else
             echo "⚠️ 未找到 seed.config，将使用默认配置"
           fi
