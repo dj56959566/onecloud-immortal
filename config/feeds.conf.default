@@ -1,7 +1,0 @@
-# Additional feeds for third-party packages (OpenClash, nikki)
-src-git packages https://github.com/immortalwrt/packages.git
-src-git luci https://github.com/immortalwrt/luci.git
-# OpenClash common repo (community fork) - optional, keep as example
-# src-git openclash https://github.com/vernesong/OpenClash.git
-# Nikki repo placeholder (replace with actual repo if you have it)
-# src-git nikki https://github.com/your-repo/nikki.git
