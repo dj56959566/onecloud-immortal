@@ -1,18 +1,14 @@
 onecloud-immortal/
-
 ├── .github/
-
-│       └── workflows/
-
-│          └── build.yml  # GitHub Actions 自动编译脚本（完整稳定版）
-
-├── feeds.conf.default         # 修复后的 feed 列表（含 Nikki / OpenClash）
-
+│   └── workflows/
+│       └── build.yml          # 自动编译 OneCloud 固件（稳定版）
+├── feeds.conf.default         # 官方源 + Nikki + OpenClash + ImmortalWrt 官方源
 ├── config_fragments/
-
-│       └── onecloud_defconfig     # OneCloud 默认编译配置
-
-└── files/                     # 可放系统默认文件（如 /etc/config/network 等）
+│   └── onecloud_defconfig     # ARMv7 OneCloud 默认配置（IP 192.168.2.2、网关 192.168.2.1、关闭 DHCP）
+└── files/
+    └── etc/
+        └── config/
+            └── network        # 预设网络配置
 
 
 
