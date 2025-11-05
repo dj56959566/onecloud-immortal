@@ -2,7 +2,7 @@ name: Build OneCloud ImmortalWrt
 
 on:
   schedule:
-    - cron: '0 16 * * *'   # 每日北京时间 00:00 自动编译
+    - cron: '0 16 * * *'   # 每日北京时间 00:00
   workflow_dispatch:
     inputs:
       kernel_version:
@@ -17,18 +17,20 @@ jobs:
       TZ: Asia/Shanghai
 
     steps:
-      - name: 🧹 清理 runner 磁盘空间
+      # 1️⃣ 清理 runner 磁盘空间
+      - name: 🧹 Clean runner cached directories
         run: |
-          echo "Cleaning up runner space..."
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost || true
-          sudo apt-get clean || true
-          docker system prune -af || true
+          echo "Cleaning up runner cache and old work dirs..."
+          sudo rm -rf /home/runner/actions-runner/cached/_diag/*
+          sudo rm -rf /home/runner/actions-runner/_work/*
           df -h
 
-      - name: 📦 检出仓库
+      # 2️⃣ 检出仓库
+      - name: 📦 Checkout repo
         uses: actions/checkout@v4
 
-      - name: ⚠️ 设置内核版本（默认 6.6，可通过 workflow_dispatch 覆盖）
+      # 3️⃣ 设置内核版本（可手动覆盖）
+      - name: ⚠️ Set kernel version
         run: |
           if [ -n "${{ github.event.inputs.kernel_version }}" ]; then
             echo "Using kernel override: ${{ github.event.inputs.kernel_version }}"
@@ -38,49 +40,61 @@ jobs:
           fi
           echo "Kernel version set to $KERNEL_VERSION"
 
-      - name: 🧰 安装编译依赖
+      # 4️⃣ 安装构建依赖
+      - name: 🧰 Install build dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential gcc g++ git wget curl unzip             python3 zstd rsync libncurses5-dev gawk gettext             libssl-dev xsltproc file bzip2 ccache
+          sudo apt install -y build-essential gcc g++ git wget curl unzip \
+            python3 zstd rsync libncurses5-dev gawk gettext \
+            libssl-dev xsltproc file bzip2 ccache
 
-      - name: 🗄️ 准备 tmpfs 编译目录（释放磁盘并提升 IO）
+      # 5️⃣ 使用 tmpfs 挂载大文件目录（提升 IO 并避免磁盘不足）
+      - name: 🗄️ Prepare tmpfs build directory
         run: |
           sudo mkdir -p /mnt/workspace
           sudo mountpoint -q /mnt/workspace || sudo mount -t tmpfs -o size=8G tmpfs /mnt/workspace
           mkdir -p /mnt/workspace/build
           export TMPDIR=/mnt/workspace/build
-          df -h /mnt/workspace || true
           echo "TMPDIR=/mnt/workspace/build" >> $GITHUB_ENV
+          df -h /mnt/workspace
 
-      - name: 📥 拉取 ImmortalWrt 源码
+      # 6️⃣ 缓存 OpenWrt 编译结果，加速后续构建
+      - name: ⚡ Cache OpenWrt build
+        uses: actions/cache@v3
+        with:
+          path: |
+            openwrt/staging_dir
+            openwrt/bin
+          key: ${{ runner.os }}-openwrt-${{ hashFiles('config/seed.config') }}
+
+      # 7️⃣ 拉取 ImmortalWrt 源码
+      - name: 📥 Clone ImmortalWrt
         run: |
           git clone https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: ⚙️ 导入配置与自定义脚本
+      # 8️⃣ 应用自定义配置与 diy 脚本
+      - name: ⚙️ Apply seed.config & diy.sh
         run: |
           cd openwrt
-          # 复制 seed config
           cp ../config/seed.config .config
-          # 确保 diy.sh 可执行并在 chroot 前做替换/调整
           chmod +x ../scripts/diy.sh
           ../scripts/diy.sh || true
 
-      - name: 🚀 开始编译
+      # 9️⃣ 编译固件
+      - name: 🚀 Build firmware
         run: |
           cd openwrt
-          # 若需要在 feeds 或 make 中使用 KERNEL_VERSION，可在此写入 make variable 或 patch
           echo "Using KERNEL_VERSION=$KERNEL_VERSION"
           make defconfig
-          # 编译；若失败改为单线程输出详细日志
           make -j$(nproc) || make -j1 V=s
 
-      - name: 📦 打包固件与生成 Release 目录
+      # 🔟 打包 Release
+      - name: 📦 Package firmware
         run: |
           mkdir -p release
-          # 拷贝可能生成的固件文件（如果路径不同请根据实际调整）
           cp -r openwrt/bin/targets/*/*/* release/ || true
           cd release
           echo "Build Time: $(date '+%Y-%m-%d %H:%M:%S')" > release_notes.txt
@@ -89,7 +103,8 @@ jobs:
           zip -r onecloud-immortal-$(date +%Y%m%d)-stable.zip ./* || true
           ls -lah
 
-      - name: 🚀 发布到 GitHub Releases
+      # 1️⃣1️⃣ 发布到 GitHub Releases
+      - name: 🚀 Release to GitHub
         uses: softprops/action-gh-release@v2
         with:
           files: release/*.zip
@@ -99,7 +114,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🧹 清理旧 Release（保留最新1个）
+      # 1️⃣2️⃣ 自动清理旧 Release，仅保留最新
+      - name: 🧹 Clean old releases
         uses: dev-drprasad/delete-older-releases@v0.3.4
         with:
           keep_latest: 1
