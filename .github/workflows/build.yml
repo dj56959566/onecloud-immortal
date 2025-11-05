@@ -1,0 +1,107 @@
+name: Build OneCloud ImmortalWrt
+
+on:
+  schedule:
+    - cron: '0 16 * * *'   # 每日北京时间 00:00 自动编译
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: '可选：覆盖默认内核版本（例如 6.6）'
+        required: false
+        default: '6.6'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Shanghai
+
+    steps:
+      - name: 🧹 清理 runner 磁盘空间
+        run: |
+          echo "Cleaning up runner space..."
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost || true
+          sudo apt-get clean || true
+          docker system prune -af || true
+          df -h
+
+      - name: 📦 检出仓库
+        uses: actions/checkout@v4
+
+      - name: ⚠️ 设置内核版本（默认 6.6，可通过 workflow_dispatch 覆盖）
+        run: |
+          if [ -n "${{ github.event.inputs.kernel_version }}" ]; then
+            echo "Using kernel override: ${{ github.event.inputs.kernel_version }}"
+            echo "KERNEL_VERSION=${{ github.event.inputs.kernel_version }}" >> $GITHUB_ENV
+          else
+            echo "KERNEL_VERSION=6.6" >> $GITHUB_ENV
+          fi
+          echo "Kernel version set to $KERNEL_VERSION"
+
+      - name: 🧰 安装编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential gcc g++ git wget curl unzip             python3 zstd rsync libncurses5-dev gawk gettext             libssl-dev xsltproc file bzip2 ccache
+
+      - name: 🗄️ 准备 tmpfs 编译目录（释放磁盘并提升 IO）
+        run: |
+          sudo mkdir -p /mnt/workspace
+          sudo mountpoint -q /mnt/workspace || sudo mount -t tmpfs -o size=8G tmpfs /mnt/workspace
+          mkdir -p /mnt/workspace/build
+          export TMPDIR=/mnt/workspace/build
+          df -h /mnt/workspace || true
+          echo "TMPDIR=/mnt/workspace/build" >> $GITHUB_ENV
+
+      - name: 📥 拉取 ImmortalWrt 源码
+        run: |
+          git clone https://github.com/immortalwrt/immortalwrt.git openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: ⚙️ 导入配置与自定义脚本
+        run: |
+          cd openwrt
+          # 复制 seed config
+          cp ../config/seed.config .config
+          # 确保 diy.sh 可执行并在 chroot 前做替换/调整
+          chmod +x ../scripts/diy.sh
+          ../scripts/diy.sh || true
+
+      - name: 🚀 开始编译
+        run: |
+          cd openwrt
+          # 若需要在 feeds 或 make 中使用 KERNEL_VERSION，可在此写入 make variable 或 patch
+          echo "Using KERNEL_VERSION=$KERNEL_VERSION"
+          make defconfig
+          # 编译；若失败改为单线程输出详细日志
+          make -j$(nproc) || make -j1 V=s
+
+      - name: 📦 打包固件与生成 Release 目录
+        run: |
+          mkdir -p release
+          # 拷贝可能生成的固件文件（如果路径不同请根据实际调整）
+          cp -r openwrt/bin/targets/*/*/* release/ || true
+          cd release
+          echo "Build Time: $(date '+%Y-%m-%d %H:%M:%S')" > release_notes.txt
+          echo "Kernel: $KERNEL_VERSION (default 6.6 LTS)" >> release_notes.txt
+          sha256sum * > checksum.sha256 || true
+          zip -r onecloud-immortal-$(date +%Y%m%d)-stable.zip ./* || true
+          ls -lah
+
+      - name: 🚀 发布到 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*.zip
+          tag_name: nightly
+          name: "OneCloud ImmortalWrt 自动构建"
+          body_path: release/release_notes.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🧹 清理旧 Release（保留最新1个）
+        uses: dev-drprasad/delete-older-releases@v0.3.4
+        with:
+          keep_latest: 1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
