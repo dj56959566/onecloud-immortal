@@ -26,7 +26,9 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential ccache libncurses5-dev libz-dev             gawk git gettext libssl-dev python3 python3-pip python3-setuptools rsync unzip wget             subversion flex bison file
+          sudo apt install -y build-essential ccache libncurses5-dev libz-dev \
+            gawk git gettext libssl-dev python3 python3-pip python3-setuptools rsync unzip wget \
+            subversion flex bison file zip
 
           # 补装 distutils（部分系统需）
           if ! python3 -m ensurepip --default-pip >/dev/null 2>&1; then
@@ -56,7 +58,7 @@ jobs:
         run: |
           cd immortalwrt
           mkdir -p files
-          cp -r ../files/* files/
+          cp -r ../files/* files/ || true
           cp ../feeds.conf.default ./feeds.conf.default
           ./scripts/feeds update -a || true
           ./scripts/feeds install -a || true
@@ -70,8 +72,32 @@ jobs:
           make download -j8
           make -j$(nproc) V=s
 
+      - name: Package Firmware
+        run: |
+          cd immortalwrt/bin/targets
+          tar czvf ../../../../OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz ./
+          cd ../../../../
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: OneCloud-ImmortalWrt-${{ github.run_number }}
-          path: immortalwrt/bin/targets/**/*
+          path: OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz
+
+      - name: Create Release and Upload
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "build-${{ github.run_number }}"
+          name: "ImmortalWrt OneCloud Build #${{ github.run_number }}"
+          body: |
+            🌈 OneCloud ARMv7 ImmortalWrt 自动构建完成！
+
+            - 内核版本：${{ github.event.inputs.kernel_patchver || '6.6' }}
+            - 固件包含：Docker、Netdata、文件传输、网页终端、自动重启等。
+            - 固定 IP：192.168.2.2 / 网关：192.168.2.1 / DHCP 已关闭。
+
+            💡 可选二次安装：
+            - OpenClash / Nikki 可使用官方 IPK 或手动编译安装。
+          files: OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
