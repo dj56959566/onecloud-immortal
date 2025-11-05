@@ -1,0 +1,132 @@
+name: Build OneCloud ImmortalWrt ARMv7
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 16 * * *' # 每日 UTC 16:00 -> 北京时间 00:00
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+  REPO_BRANCH: master
+  TARGET_SUBTARGET: generic
+  TARGET_PROFILE: ONECLOUD_PROFILE
+  KERNEL_PATCHVER: "6.6"
+  NUM_JOBS: 2
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Prepare system (clean + deps)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential gcc g++ git python3 rsync unzip zstd qemu-utils binutils bzip2 kmod parted kpartx
+          # Free some disk space used by hosted tools cache
+          sudo rm -rf /opt/hostedtoolcache || true
+          df -h
+
+      - name: Clone ImmortalWrt source (shallow)
+        run: |
+          git clone --depth=1 -b ${REPO_BRANCH} ${REPO_URL} openwrt
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          # remove unneeded targets to save space
+          rm -rf target/linux/x86 target/linux/mips*
+          df -h
+
+      - name: Copy repo files into source
+        run: |
+          cp -r $GITHUB_WORKSPACE/config ./openwrt/ || true
+          cp -r $GITHUB_WORKSPACE/scripts ./openwrt/ || true
+
+      - name: Apply DIY customizations
+        run: |
+          cd openwrt
+          chmod +x ../scripts/diy.sh
+          ../scripts/diy.sh
+
+      - name: Copy .config (seed)
+        run: |
+          if [ -f ../config/seed.config ]; then
+            cp ../config/seed.config .config
+          fi
+
+      - name: Download sources (single-thread)
+        run: |
+          cd openwrt
+          make download -j1 V=s
+
+      - name: Build firmware
+        run: |
+          cd openwrt
+          make -j${{ env.NUM_JOBS }} V=s || (cat build_dir/*/build.log || true; exit 1)
+
+      - name: Package sysupgrade (line-flash) zip
+        if: always()
+        run: |
+          cd openwrt/bin/targets
+          mkdir -p publish/sysupgrade
+          find . -type f -name "*sysupgrade*.bin" -exec cp {} publish/sysupgrade/ \;
+          cd publish/sysupgrade
+          [ -f sha256sums.txt ] || sha256sum * > sha256sums.txt || true
+          printf "OneCloud ImmortalWrt 线刷版\n适用: 线刷/sysupgrade 更新（请在确认设备匹配后使用）\n" > README-线刷版.txt
+          zip -r ../../OneCloud-ImmortalWrt-Sysupgrade.zip sysupgrade
+
+      - name: Package USB (img) zip
+        if: always()
+        run: |
+          cd openwrt/bin/targets
+          mkdir -p publish/usb
+          find . -type f -name "*rootfs*-ext4*.img*" -exec cp {} publish/usb/ \;
+          cd publish/usb
+          [ -f sha256sums.txt ] || sha256sum * > sha256sums.txt || true
+          printf "OneCloud ImmortalWrt U盘版\n适用: 写入外部U盘后用于启动/恢复（请先阅读说明）\n" > README-U盘版.txt
+          zip -r ../../OneCloud-ImmortalWrt-USB.zip usb
+
+      - name: Collect build log
+        if: always()
+        run: |
+          mkdir -p openwrt/publish/log
+          cp -v openwrt/build_dir/*/config.log openwrt/publish/log/ 2>/dev/null || true
+          echo "See full workflow logs in Actions UI." > openwrt/publish/log/README.txt
+
+      - name: Create combined publish folder
+        if: always()
+        run: |
+          cd openwrt/bin/targets
+          mkdir -p publish/final
+          cp ../../OneCloud-ImmortalWrt-Sysupgrade.zip publish/final/ || true
+          cp ../../OneCloud-ImmortalWrt-USB.zip publish/final/ || true
+          cp -v ../publish/log/* publish/final/ 2>/dev/null || true
+
+      - name: Delete older releases (keep 1)
+        uses: dev-drprasad/delete-older-releases@v0.3.3
+        with:
+          keep_latest: 1
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release with two zip files
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: OneCloud-ImmortalWrt-${{ github.run_number }}
+          files: |
+            openwrt/bin/targets/OneCloud-ImmortalWrt-Sysupgrade.zip
+            openwrt/bin/targets/OneCloud-ImmortalWrt-USB.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: onecloud-artifacts
+          path: |
+            openwrt/bin/targets/OneCloud-ImmortalWrt-Sysupgrade.zip
+            openwrt/bin/targets/OneCloud-ImmortalWrt-USB.zip
+            openwrt/publish/log/*
