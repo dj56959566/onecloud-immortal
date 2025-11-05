@@ -1,97 +1,55 @@
-name: Build ImmortalWrt OneCloud (ARMv7)
+name: Build OneCloud ImmortalWrt ARMv7
 
 on:
   workflow_dispatch:
-    inputs:
-      kernel_patchver:
-        description: 'Kernel patch version (e.g. 6.6)'
-        required: false
-        default: '6.6'
   schedule:
-    - cron: '0 3 * * *'
-  push:
-    branches: [ main ]
+    - cron: '0 3 * * *' # 每天凌晨3点自动编译
+
+env:
+  REPO_URL: https://github.com/immortalwrt/immortalwrt.git
+  REPO_BRANCH: master
+  DEVICE_NAME: onecloud
+  TARGET: armv7
+  CONFIG_FILE: config/seed.config
+  DIY_SCRIPT: scripts/diy.sh
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-22.04
     steps:
-      - name: Checkout source
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Free Disk Space
-        run: |
-          echo "Before cleanup:"; df -h
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache || true
-          sudo apt clean
-          echo "After cleanup:"; df -h
-
-      - name: Install Dependencies
+      - name: 初始化构建环境
         run: |
           sudo apt update
-          sudo apt install -y build-essential ccache libncurses5-dev libz-dev \
-            gawk git gettext libssl-dev python3 python3-pip python3-setuptools rsync unzip wget \
-            subversion flex bison file
-          if ! python3 -m ensurepip --default-pip >/dev/null 2>&1; then
-            sudo apt install -y python3-venv || true
-          fi
+          sudo apt install -y build-essential gcc g++ git python3 rsync unzip zstd qemu-utils upx libncurses5-dev gawk gettext wget
 
-      - name: Add Swap
+      - name: 克隆 ImmortalWrt 源码
         run: |
-          sudo fallocate -l 12G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=12288
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          free -h
-
-      - name: Clone ImmortalWrt
-        run: |
-          git clone https://github.com/immortalwrt/immortalwrt.git
-          cd immortalwrt
-          ./scripts/feeds update -a || true
-          ./scripts/feeds install -a || true
-
-      - name: Remove invalid feeds (telephony fix)
-        run: |
-          cd immortalwrt
-          echo "🧹 Fixing invalid telephony feed..."
-          # 删除 telephony feed 防止 No such file or directory 报错
-          sed -i '/immortalwrt_telephony/d' feeds.conf.default
-          ./scripts/feeds clean
+          git clone --depth=1 $REPO_URL -b $REPO_BRANCH openwrt
+          cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          # 清理空目录
-          find feeds -maxdepth 1 -type d -empty -delete
 
-      - name: Copy Custom Config
+      - name: 应用自定义修改
         run: |
-          cd immortalwrt
-          mkdir -p files
-          cp -r ../files/* files/ || true
-          cp ../feeds.conf.default ./feeds.conf.default || true
-          ./scripts/feeds update -a
-          ./scripts/feeds install -a
-          cp ../config_fragments/onecloud_defconfig .config || true
-          echo "KERNEL_PATCHVER=${{ github.event.inputs.kernel_patchver || '6.6' }}" >> .config
+          chmod +x $GITHUB_WORKSPACE/$DIY_SCRIPT
+          cd openwrt
+          $GITHUB_WORKSPACE/$DIY_SCRIPT
+
+      - name: 拷贝配置文件
+        run: |
+          cp $GITHUB_WORKSPACE/$CONFIG_FILE openwrt/.config
+
+      - name: 开始编译
+        run: |
+          cd openwrt
           make defconfig
+          make -j$(nproc) || make -j1 V=s
 
-      - name: Build Firmware
-        run: |
-          cd immortalwrt
-          make download -j8
-          make -j1 V=s
-
-      - name: Compress Firmware
-        run: |
-          cd immortalwrt/bin/targets
-          tar -czf ../../../../OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz .
-          du -sh ../../../../OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz
-
-      - name: Upload Firmware
+      - name: 上传固件
         uses: actions/upload-artifact@v4
         with:
-          name: OneCloud-ImmortalWrt-${{ github.run_number }}
-          path: OneCloud-ImmortalWrt-${{ github.run_number }}.tar.gz
+          name: OneCloud-ImmortalWrt
+          path: openwrt/bin/targets/
