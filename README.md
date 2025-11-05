@@ -1,4 +1,22 @@
-# OneCloud ImmortalWrt Auto Builder
+onecloud-immortal/
+
+├── .github/
+
+│       └── workflows/
+
+│          └── build.yml  # GitHub Actions 自动编译脚本（完整稳定版）
+
+├── feeds.conf.default         # 修复后的 feed 列表（含 Nikki / OpenClash）
+
+├── config_fragments/
+
+│       └── onecloud_defconfig     # OneCloud 默认编译配置
+
+└── files/                     # 可放系统默认文件（如 /etc/config/network 等）
+
+
+
+# OneCloud ImmortalWrt 
 
 自动构建基于 **ImmortalWrt (ARMv7)** 的 OneCloud 固件。
 
