@@ -6,7 +6,7 @@ on:
       kernel_version:
         description: "选择内核版本（如 6.6 / 6.12 / 6.13 / latest）"
         required: false
-        默认: "6.6"
+        default: "6.6"
   schedule:
     - cron: '0 16 * * *' # 每日 UTC 16:00 -> 北京时间 00:00
 
@@ -24,40 +24,118 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Prepare system
+      - name: Prepare build environment
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential gcc g++ git python3 rsync unzip zstd qemu-utils binutils bzip2 kmod parted kpartx
           sudo rm -rf /opt/hostedtoolcache || true
           df -h
 
-      - name: Clone ImmortalWrt
+      - name: Clone ImmortalWrt source
         run: |
           git clone --depth=1 -b ${REPO_BRANCH} ${REPO_URL} openwrt
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          df -h
+
+      - name: Copy custom scripts/config into source
+        run: |
+          cp -r $GITHUB_WORKSPACE/config ./openwrt/ || true
+          cp -r $GITHUB_WORKSPACE/scripts ./openwrt/ || true
 
       - name: Apply DIY customizations
         run: |
           cd openwrt
-          cp -r $GITHUB_WORKSPACE/config ./ || true
-          cp -r $GITHUB_WORKSPACE/scripts ./ || true
-          chmod +x ./scripts/diy.sh
-          ./scripts/diy.sh
+          chmod +x ../scripts/diy.sh
+          ../scripts/diy.sh
 
       - name: Set kernel version dynamically
         run: |
           cd openwrt
-          echo "Using kernel version: ${{ github.event.inputs.kernel_version || '6.6' }}"
-          sed -i "s/CONFIG_KERNEL_PATCHVER=.*/CONFIG_KERNEL_PATCHVER=\"${{ github.event.inputs.kernel_version || '6.6' }}\"/" ../config/seed.config || true
+          KERNEL_VER="${{ github.event.inputs.kernel_version || '6.6' }}"
+          echo "🧩 使用内核版本: $KERNEL_VER"
+          if grep -q "CONFIG_KERNEL_PATCHVER" ../config/seed.config; then
+            sed -i "s/CONFIG_KERNEL_PATCHVER=.*/CONFIG_KERNEL_PATCHVER=\"$KERNEL_VER\"/" ../config/seed.config
+          else
+            echo "CONFIG_KERNEL_PATCHVER=\"$KERNEL_VER\"" >> ../config/seed.config
+          fi
 
-      - name: Use seed config
+      - name: Use seed config (safe copy)
         run: |
-          cp ../config/seed.config .config
+          if [ -f ../config/seed.config ]; then
+            cp ../config/seed.config .config
+          elif [ -f $GITHUB_WORKSPACE/config/seed.config ]; then
+            cp $GITHUB_WORKSPACE/config/seed.config .config
+          else
+            echo "⚠️ 未找到 seed.config，将使用默认配置"
+          fi
+
+      - name: Download sources
+        run: |
+          cd openwrt
+          make download -j1 V=s
 
       - name: Build firmware
         run: |
           cd openwrt
-          make download -j1
-          make -j${{ env.NUM_JOBS }} V=s
+          make -j${{ env.NUM_JOBS }} V=s || (cat build_dir/*/build.log || true; exit 1)
+
+      - name: Package sysupgrade (线刷版)
+        if: always()
+        run: |
+          cd openwrt/bin/targets
+          mkdir -p publish/sysupgrade
+          find . -type f -name "*sysupgrade*.bin" -exec cp {} publish/sysupgrade/ \;
+          cd publish/sysupgrade
+          sha256sum * > sha256sums.txt || true
+          echo "OneCloud ImmortalWrt 线刷版" > README-线刷版.txt
+          echo "适用：直接在设备上 sysupgrade 更新" >> README-线刷版.txt
+          zip -r ../../OneCloud-ImmortalWrt-Sysupgrade.zip .
+
+      - name: Package USB (U盘版)
+        if: always()
+        run: |
+          cd openwrt/bin/targets
+          mkdir -p publish/usb
+          find . -type f -name "*rootfs*-ext4*.img*" -exec cp {} publish/usb/ \;
+          cd publish/usb
+          sha256sum * > sha256sums.txt || true
+          echo "OneCloud ImmortalWrt U盘版" > README-U盘版.txt
+          echo "适用：写入U盘后启动或恢复系统" >> README-U盘版.txt
+          zip -r ../../OneCloud-ImmortalWrt-USB.zip .
+
+      - name: Clean up and collect logs
+        if: always()
+        run: |
+          mkdir -p openwrt/publish/log
+          cp -v openwrt/build_dir/*/config.log openwrt/publish/log/ 2>/dev/null || true
+          echo "构建日志可在 Actions 查看" > openwrt/publish/log/README.txt
+
+      - name: Delete older releases (keep 1)
+        uses: dev-drprasad/delete-older-releases@v0.3.3
+        with:
+          keep_latest: 1
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: OneCloud-ImmortalWrt-${{ github.run_number }}
+          files: |
+            openwrt/bin/targets/OneCloud-ImmortalWrt-Sysupgrade.zip
+            openwrt/bin/targets/OneCloud-ImmortalWrt-USB.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: onecloud-artifacts
+          path: |
+            openwrt/bin/targets/OneCloud-ImmortalWrt-Sysupgrade.zip
+            openwrt/bin/targets/OneCloud-ImmortalWrt-USB.zip
+            openwrt/publish/log/*
