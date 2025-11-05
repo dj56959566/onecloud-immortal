@@ -8,7 +8,7 @@ on:
         required: false
         default: "6.6"
   schedule:
-    - cron: '0 16 * * *' # 每日 UTC 16:00 -> 北京时间 00:00
+    - cron: '0 16 * * *' # 每日 UTC 16:00 → 北京时间 00:00 自动构建
 
 env:
   REPO_URL: https://github.com/immortalwrt/immortalwrt.git
@@ -28,7 +28,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential gcc g++ git python3 rsync unzip zstd qemu-utils binutils bzip2 kmod parted kpartx
-          sudo rm -rf /opt/hostedtoolcache || true
           df -h
 
       - name: Clone ImmortalWrt source
@@ -37,36 +36,35 @@ jobs:
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          df -h
 
-      - name: Copy custom scripts/config into source
+      - name: Copy custom config/scripts
         run: |
-          cp -r $GITHUB_WORKSPACE/config ./openwrt/ || true
-          cp -r $GITHUB_WORKSPACE/scripts ./openwrt/ || true
+          mkdir -p openwrt/custom
+          cp -r $GITHUB_WORKSPACE/config openwrt/custom/config || true
+          cp -r $GITHUB_WORKSPACE/scripts openwrt/custom/scripts || true
 
       - name: Apply DIY customizations
         run: |
           cd openwrt
-          chmod +x ../scripts/diy.sh
-          ../scripts/diy.sh
+          chmod +x custom/scripts/diy.sh
+          custom/scripts/diy.sh
 
       - name: Set kernel version dynamically
         run: |
           cd openwrt
           KERNEL_VER="${{ github.event.inputs.kernel_version || '6.6' }}"
           echo "🧩 使用内核版本: $KERNEL_VER"
-          if grep -q "CONFIG_KERNEL_PATCHVER" ../config/seed.config; then
-            sed -i "s/CONFIG_KERNEL_PATCHVER=.*/CONFIG_KERNEL_PATCHVER=\"$KERNEL_VER\"/" ../config/seed.config
+          if grep -q "CONFIG_KERNEL_PATCHVER" custom/config/seed.config; then
+            sed -i "s/CONFIG_KERNEL_PATCHVER=.*/CONFIG_KERNEL_PATCHVER=\"$KERNEL_VER\"/" custom/config/seed.config
           else
-            echo "CONFIG_KERNEL_PATCHVER=\"$KERNEL_VER\"" >> ../config/seed.config
+            echo "CONFIG_KERNEL_PATCHVER=\"$KERNEL_VER\"" >> custom/config/seed.config
           fi
 
-      - name: Use seed config (safe copy)
+      - name: Use seed config safely
         run: |
-          if [ -f ../config/seed.config ]; then
-            cp ../config/seed.config .config
-          elif [ -f $GITHUB_WORKSPACE/config/seed.config ]; then
-            cp $GITHUB_WORKSPACE/config/seed.config .config
+          cd openwrt
+          if [ -f custom/config/seed.config ]; then
+            cp custom/config/seed.config .config
           else
             echo "⚠️ 未找到 seed.config，将使用默认配置"
           fi
@@ -85,34 +83,34 @@ jobs:
         if: always()
         run: |
           cd openwrt/bin/targets
-          mkdir -p publish/sysupgrade
-          find . -type f -name "*sysupgrade*.bin" -exec cp {} publish/sysupgrade/ \;
-          cd publish/sysupgrade
+          mkdir -p ../../publish/sysupgrade
+          find . -type f -name "*sysupgrade*.bin" -exec cp {} ../../publish/sysupgrade/ \;
+          cd ../../publish/sysupgrade
           sha256sum * > sha256sums.txt || true
           echo "OneCloud ImmortalWrt 线刷版" > README-线刷版.txt
-          echo "适用：直接在设备上 sysupgrade 更新" >> README-线刷版.txt
-          zip -r ../../OneCloud-ImmortalWrt-Sysupgrade.zip .
+          echo "适用：设备上 sysupgrade 方式刷入" >> README-线刷版.txt
+          zip -r ../OneCloud-ImmortalWrt-Sysupgrade.zip .
 
       - name: Package USB (U盘版)
         if: always()
         run: |
           cd openwrt/bin/targets
-          mkdir -p publish/usb
-          find . -type f -name "*rootfs*-ext4*.img*" -exec cp {} publish/usb/ \;
-          cd publish/usb
+          mkdir -p ../../publish/usb
+          find . -type f -name "*ext4*.img*" -exec cp {} ../../publish/usb/ \;
+          cd ../../publish/usb
           sha256sum * > sha256sums.txt || true
           echo "OneCloud ImmortalWrt U盘版" > README-U盘版.txt
-          echo "适用：写入U盘后启动或恢复系统" >> README-U盘版.txt
-          zip -r ../../OneCloud-ImmortalWrt-USB.zip .
+          echo "适用：dd写入U盘后启动" >> README-U盘版.txt
+          zip -r ../OneCloud-ImmortalWrt-USB.zip .
 
-      - name: Clean up and collect logs
+      - name: Collect logs
         if: always()
         run: |
           mkdir -p openwrt/publish/log
           cp -v openwrt/build_dir/*/config.log openwrt/publish/log/ 2>/dev/null || true
           echo "构建日志可在 Actions 查看" > openwrt/publish/log/README.txt
 
-      - name: Delete older releases (keep 1)
+      - name: Delete older releases (keep latest)
         uses: dev-drprasad/delete-older-releases@v0.3.3
         with:
           keep_latest: 1
@@ -126,8 +124,8 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: OneCloud-ImmortalWrt-${{ github.run_number }}
           files: |
-            openwrt/bin/targets/OneCloud-ImmortalWrt-Sysupgrade.zip
-            openwrt/bin/targets/OneCloud-ImmortalWrt-USB.zip
+            openwrt/publish/OneCloud-ImmortalWrt-Sysupgrade.zip
+            openwrt/publish/OneCloud-ImmortalWrt-USB.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -135,7 +133,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: onecloud-artifacts
-          path: |
-            openwrt/bin/targets/OneCloud-ImmortalWrt-Sysupgrade.zip
-            openwrt/bin/targets/OneCloud-ImmortalWrt-USB.zip
-            openwrt/publish/log/*
+          path: openwrt/publish/
