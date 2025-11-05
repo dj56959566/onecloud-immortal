@@ -1,8 +1,0 @@
-#!/bin/sh
-# set default network and disable DHCP for lan (旁路由)
-uci set network.lan.ipaddr='192.168.2.2' || true
-uci set network.lan.gateway='192.168.2.1' || true
-uci commit network || true
-uci set dhcp.lan.ignore='1' || true
-uci commit dhcp || true
-exit 0
