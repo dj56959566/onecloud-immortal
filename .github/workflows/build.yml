@@ -2,13 +2,20 @@ name: Build OneCloud ImmortalWrt
 
 on:
   schedule:
-    - cron: '0 16 * * *'   # 每日北京时间 00:00
+    - cron: '0 16 * * *'   # 每日北京时间 00:00 自动构建
   workflow_dispatch:
     inputs:
       kernel_version:
-        description: '可选：覆盖默认内核版本（例如 6.6）'
-        required: false
+        description: '选择内核版本（默认 6.6 LTS）'
+        required: true
         default: '6.6'
+        type: choice
+        options:
+          - 5.15
+          - 6.6
+          - 6.10
+          - 6.12
+          - 6.13
 
 jobs:
   build:
@@ -17,73 +24,62 @@ jobs:
       TZ: Asia/Shanghai
 
     steps:
-      # 1️⃣ 清理 runner 磁盘空间
-      - name: 🧹 Clean runner cached directories
+      - name: 🧹 Full system cleanup before build
         run: |
-          echo "Cleaning up runner cache and old work dirs..."
-          sudo rm -rf /home/runner/actions-runner/cached/_diag/*
-          sudo rm -rf /home/runner/actions-runner/_work/*
+          echo "🚧 Cleaning runner environment to free space..."
+          sudo rm -rf /home/runner/* || true
+          sudo docker system prune -af || true
+          sudo apt-get clean || true
+          sudo rm -rf /usr/local/lib/android || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /opt/hostedtoolcache || true
+          sudo rm -rf /home/runner/actions-runner/cached || true
           df -h
 
-      # 2️⃣ 检出仓库
       - name: 📦 Checkout repo
         uses: actions/checkout@v4
 
-      # 3️⃣ 设置内核版本（可手动覆盖）
-      - name: ⚠️ Set kernel version
+      - name: ⚙️ Set kernel version
         run: |
-          if [ -n "${{ github.event.inputs.kernel_version }}" ]; then
-            echo "Using kernel override: ${{ github.event.inputs.kernel_version }}"
-            echo "KERNEL_VERSION=${{ github.event.inputs.kernel_version }}" >> $GITHUB_ENV
-          else
-            echo "KERNEL_VERSION=6.6" >> $GITHUB_ENV
-          fi
+          echo "KERNEL_VERSION=${{ github.event.inputs.kernel_version }}" >> $GITHUB_ENV
           echo "Kernel version set to $KERNEL_VERSION"
 
-      # 4️⃣ 安装构建依赖
-      - name: 🧰 Install build dependencies
+      - name: 🧰 Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential gcc g++ git wget curl unzip \
-            python3 zstd rsync libncurses5-dev gawk gettext \
-            libssl-dev xsltproc file bzip2 ccache
+          sudo apt install -y build-essential gcc g++ git wget curl unzip             python3 zstd rsync libncurses5-dev gawk gettext             libssl-dev xsltproc file bzip2 ccache
 
-      # 5️⃣ 使用 tmpfs 挂载大文件目录（提升 IO 并避免磁盘不足）
-      - name: 🗄️ Prepare tmpfs build directory
+      - name: 🗄️ Setup tmpfs build directory
         run: |
           sudo mkdir -p /mnt/workspace
           sudo mountpoint -q /mnt/workspace || sudo mount -t tmpfs -o size=8G tmpfs /mnt/workspace
           mkdir -p /mnt/workspace/build
-          export TMPDIR=/mnt/workspace/build
           echo "TMPDIR=/mnt/workspace/build" >> $GITHUB_ENV
+          echo "WORKDIR=/mnt/workspace/build" >> $GITHUB_ENV
           df -h /mnt/workspace
 
-      # 6️⃣ 缓存 OpenWrt 编译结果，加速后续构建
       - name: ⚡ Cache OpenWrt build
         uses: actions/cache@v3
         with:
           path: |
             openwrt/staging_dir
-            openwrt/bin
+            openwrt/dl
           key: ${{ runner.os }}-openwrt-${{ hashFiles('config/seed.config') }}
 
-      # 7️⃣ 拉取 ImmortalWrt 源码
-      - name: 📥 Clone ImmortalWrt
+      - name: 📥 Clone ImmortalWrt source
         run: |
           git clone https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # 8️⃣ 应用自定义配置与 diy 脚本
-      - name: ⚙️ Apply seed.config & diy.sh
+      - name: 🧩 Apply seed.config & diy.sh
         run: |
           cd openwrt
           cp ../config/seed.config .config
           chmod +x ../scripts/diy.sh
           ../scripts/diy.sh || true
 
-      # 9️⃣ 编译固件
       - name: 🚀 Build firmware
         run: |
           cd openwrt
@@ -91,33 +87,52 @@ jobs:
           make defconfig
           make -j$(nproc) || make -j1 V=s
 
-      # 🔟 打包 Release
-      - name: 📦 Package firmware
+      - name: 📦 Package firmware separately (sysupgrade & sdcard)
         run: |
           mkdir -p release
+          # copy outputs if exist
           cp -r openwrt/bin/targets/*/*/* release/ || true
           cd release
           echo "Build Time: $(date '+%Y-%m-%d %H:%M:%S')" > release_notes.txt
-          echo "Kernel: $KERNEL_VERSION (default 6.6 LTS)" >> release_notes.txt
+          echo "Kernel: $KERNEL_VERSION" >> release_notes.txt
+          ls -lah >> release_notes.txt || true
+          # generate checksum
           sha256sum * > checksum.sha256 || true
-          zip -r onecloud-immortal-$(date +%Y%m%d)-stable.zip ./* || true
+          # find files
+          SYSUPGRADE=$(ls *sysupgrade.bin 2>/dev/null | head -n1 || true)
+          SDCARD=$(ls *sdcard.img.gz 2>/dev/null | head -n1 || true)
+          # package separately
+          if [ -n "$SYSUPGRADE" ]; then
+            zip -j onecloud-immortal-${KERNEL_VERSION}-sysupgrade.zip "$SYSUPGRADE" checksum.sha256 release_notes.txt || true
+          fi
+          if [ -n "$SDCARD" ]; then
+            zip -j onecloud-immortal-${KERNEL_VERSION}-sdcard.zip "$SDCARD" checksum.sha256 release_notes.txt || true
+          fi
           ls -lah
 
-      # 1️⃣1️⃣ 发布到 GitHub Releases
-      - name: 🚀 Release to GitHub
+      - name: 🚀 Release to GitHub (upload both zips if present)
         uses: softprops/action-gh-release@v2
         with:
           files: release/*.zip
           tag_name: nightly
-          name: "OneCloud ImmortalWrt 自动构建"
+          name: "OneCloud ImmortalWrt 自动构建 - Kernel ${{ github.event.inputs.kernel_version }}"
           body_path: release/release_notes.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1️⃣2️⃣ 自动清理旧 Release，仅保留最新
       - name: 🧹 Clean old releases
         uses: dev-drprasad/delete-older-releases@v0.3.4
         with:
           keep_latest: 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: ♻️ Unmount tmpfs and cleanup after build
+        if: always()
+        run: |
+          echo "🧹 Unmounting tmpfs build directory..."
+          sudo umount /mnt/workspace || true
+          sudo rm -rf /mnt/workspace || true
+          echo "✅ tmpfs released and workspace cleaned."
+          df -h
+    
+          
