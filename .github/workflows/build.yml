@@ -47,7 +47,7 @@ jobs:
       - name: 🧰 Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential gcc g++ git wget curl unzip             python3 zstd rsync libncurses5-dev gawk gettext             libssl-dev xsltproc file bzip2 ccache
+          sudo apt install -y build-essential gcc g++ git wget curl unzip python3 zstd rsync libncurses5-dev gawk gettext libssl-dev xsltproc file bzip2 ccache
 
       - name: 🗄️ Setup tmpfs build directory
         run: |
@@ -90,18 +90,14 @@ jobs:
       - name: 📦 Package firmware separately (sysupgrade & sdcard)
         run: |
           mkdir -p release
-          # copy outputs if exist
           cp -r openwrt/bin/targets/*/*/* release/ || true
           cd release
           echo "Build Time: $(date '+%Y-%m-%d %H:%M:%S')" > release_notes.txt
           echo "Kernel: $KERNEL_VERSION" >> release_notes.txt
           ls -lah >> release_notes.txt || true
-          # generate checksum
           sha256sum * > checksum.sha256 || true
-          # find files
           SYSUPGRADE=$(ls *sysupgrade.bin 2>/dev/null | head -n1 || true)
           SDCARD=$(ls *sdcard.img.gz 2>/dev/null | head -n1 || true)
-          # package separately
           if [ -n "$SYSUPGRADE" ]; then
             zip -j onecloud-immortal-${KERNEL_VERSION}-sysupgrade.zip "$SYSUPGRADE" checksum.sha256 release_notes.txt || true
           fi
@@ -126,6 +122,7 @@ jobs:
           keep_latest: 1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: ♻️ Unmount tmpfs and cleanup after build
         if: always()
         run: |
@@ -134,5 +131,3 @@ jobs:
           sudo rm -rf /mnt/workspace || true
           echo "✅ tmpfs released and workspace cleaned."
           df -h
-    
-          
