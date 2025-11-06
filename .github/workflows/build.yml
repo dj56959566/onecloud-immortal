@@ -1,4 +1,4 @@
-name: Build OneCloud ImmortalWrt
+name: Build OneCloud ImmortalWrt (Extreme Space Optimized)
 
 on:
   schedule:
@@ -19,24 +19,25 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     env:
       TZ: Asia/Shanghai
+      START_TIME: ${{ github.run_started_at }}
 
     steps:
-      - name: 🧹 Safe system cleanup before build
+      - name: 🧹 Full Advanced Cleanup (Free up >20GB)
         run: |
-          echo "🚧 Cleaning runner environment to free space..."
-          # 不要删除 /home/runner/work，否则会中断 workflow
-          sudo rm -rf /tmp/* || true
-          sudo rm -rf /var/lib/apt/lists/* || true
+          echo "🚧 Cleaning runner environment to maximize space..."
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
           sudo docker system prune -af || true
+          sudo apt-get autoremove -y || true
           sudo apt-get clean || true
-          sudo rm -rf /usr/local/lib/android /opt/ghc /opt/hostedtoolcache || true
-          df -h
-          echo "✅ Cleanup done."
+          sudo rm -rf /var/lib/apt/lists/* || true
+          sudo rm -rf /tmp/* || true
+          echo "✅ After cleanup:"
+          df -h /
 
-      - name: 📦 Checkout repo
+      - name: 📦 Checkout repository
         uses: actions/checkout@v4
 
       - name: ⚙️ Set kernel version
@@ -44,73 +45,107 @@ jobs:
           echo "KERNEL_VERSION=${{ github.event.inputs.kernel_version }}" >> $GITHUB_ENV
           echo "Kernel version set to $KERNEL_VERSION"
 
-      - name: 🧰 Install dependencies
+      - name: 🧰 Install essential dependencies
         run: |
           sudo apt update
           sudo apt install -y build-essential gcc g++ git wget curl unzip \
             python3 zstd rsync libncurses5-dev gawk gettext \
             libssl-dev xsltproc file bzip2 ccache
+          df -h /
 
-      - name: 🗄️ Setup tmpfs build directory
+      - name: 🧪 Check free space before build
         run: |
-          echo "🧩 Mounting tmpfs (8G) for faster build..."
+          echo "Checking available disk space..."
+          df -h /
+          avail=$(df / | tail -1 | awk '{print $4}' | sed 's/G//')
+          if [ "${avail%.*}" -lt 5 ]; then
+            echo "❌ Not enough space (<5G free). Exiting."
+            exit 1
+          fi
+
+      - name: 🗄️ Setup tmpfs build directory (8G RAM)
+        run: |
+          echo "🧩 Mounting tmpfs (8G) for build workspace..."
           sudo mkdir -p /mnt/workspace
           sudo mountpoint -q /mnt/workspace || sudo mount -t tmpfs -o size=8G tmpfs /mnt/workspace
-          mkdir -p /mnt/workspace/build
-          echo "TMPDIR=/mnt/workspace/build" >> $GITHUB_ENV
-          echo "WORKDIR=/mnt/workspace/build" >> $GITHUB_ENV
+          mkdir -p /mnt/workspace/openwrt
+          echo "WORKDIR=/mnt/workspace/openwrt" >> $GITHUB_ENV
           df -h /mnt/workspace
-
-      - name: ⚡ Cache OpenWrt build
-        uses: actions/cache@v3
-        with:
-          path: |
-            openwrt/staging_dir
-            openwrt/dl
-          key: ${{ runner.os }}-openwrt-${{ hashFiles('config/seed.config') }}
 
       - name: 📥 Clone ImmortalWrt source
         run: |
+          cd /mnt/workspace
           git clone https://github.com/immortalwrt/immortalwrt.git openwrt
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 🧩 Apply seed.config & diy.sh
+      - name: 🧩 Apply config and custom diy.sh
         run: |
-          cd openwrt
-          cp ../config/seed.config .config
-          chmod +x ../scripts/diy.sh
-          ../scripts/diy.sh || true
+          cd /mnt/workspace/openwrt
+          cp $GITHUB_WORKSPACE/config/seed.config .config
+          chmod +x $GITHUB_WORKSPACE/scripts/diy.sh
+          $GITHUB_WORKSPACE/scripts/diy.sh || true
+
+      - name: 🧪 Check free space before compile
+        run: |
+          df -h /
+          avail=$(df / | tail -1 | awk '{print $4}' | sed 's/G//')
+          if [ "${avail%.*}" -lt 5 ]; then
+            echo "❌ Not enough space (<5G free). Exiting."
+            exit 1
+          fi
 
       - name: 🚀 Build firmware
         run: |
-          cd openwrt
+          cd /mnt/workspace/openwrt
           echo "Using KERNEL_VERSION=$KERNEL_VERSION"
           make defconfig
           make -j$(nproc) || make -j1 V=s
 
-      - name: 📦 Package firmware separately (sysupgrade & sdcard)
+      - name: 📦 Package firmware and generate release notes
         run: |
           mkdir -p release
-          cp -r openwrt/bin/targets/*/*/* release/ || true
+          cp -r /mnt/workspace/openwrt/bin/targets/*/*/* release/ || true
           cd release
-          echo "Build Time: $(date '+%Y-%m-%d %H:%M:%S')" > release_notes.txt
-          echo "Kernel: $KERNEL_VERSION" >> release_notes.txt
+
+          END_TIME=$(date '+%Y-%m-%d %H:%M:%S')
+          BUILD_TIME=$(( ($(date -d "$END_TIME" +%s) - $(date -d "${{ env.START_TIME }}" +%s)) / 60 ))
+
+          echo "OneCloud ImmortalWrt 自动构建完成" > release_notes.txt
+          echo "构建时间: $END_TIME" >> release_notes.txt
+          echo "构建耗时: ${BUILD_TIME} 分钟" >> release_notes.txt
+          echo "内核版本: $KERNEL_VERSION" >> release_notes.txt
+          echo "" >> release_notes.txt
+          echo "文件列表：" >> release_notes.txt
           ls -lah >> release_notes.txt || true
+
           sha256sum * > checksum.sha256 || true
 
           SYSUPGRADE=$(ls *sysupgrade.bin 2>/dev/null | head -n1 || true)
           SDCARD=$(ls *sdcard.img.gz 2>/dev/null | head -n1 || true)
+
           if [ -n "$SYSUPGRADE" ]; then
             zip -j onecloud-immortal-${KERNEL_VERSION}-sysupgrade.zip "$SYSUPGRADE" checksum.sha256 release_notes.txt || true
           fi
           if [ -n "$SDCARD" ]; then
             zip -j onecloud-immortal-${KERNEL_VERSION}-sdcard.zip "$SDCARD" checksum.sha256 release_notes.txt || true
           fi
+
+          # 合并总包
+          zip -r onecloud-immortal-${KERNEL_VERSION}.zip ./*.zip || true
+
+          echo "✅ 打包完成："
           ls -lah
 
-      - name: 🚀 Release to GitHub (upload both zips if present)
+      - name: 🧹 Delete old releases (keep latest 0)
+        uses: dev-drprasad/delete-older-releases@v0.3.4
+        with:
+          keep_latest: 0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🚀 Publish new release
         uses: softprops/action-gh-release@v2
         with:
           files: release/*.zip
@@ -120,18 +155,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🧹 Clean old releases
-        uses: dev-drprasad/delete-older-releases@v0.3.4
-        with:
-          keep_latest: 1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: ♻️ Unmount tmpfs and cleanup after build
+      - name: ♻️ Cleanup & unmount tmpfs
         if: always()
         run: |
           echo "🧹 Unmounting tmpfs build directory..."
           sudo umount /mnt/workspace || true
           sudo rm -rf /mnt/workspace || true
-          echo "✅ tmpfs released and workspace cleaned."
           df -h
+          echo "✅ tmpfs released and workspace cleaned."
