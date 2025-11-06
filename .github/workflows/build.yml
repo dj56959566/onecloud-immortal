@@ -1,8 +1,17 @@
-name: onecloud-immortalwrt
+name: immortalwrt
 
 on:
   workflow_dispatch:
     inputs:
+      kernel:
+        description: '选择内核版本'
+        required: true
+        default: '6.6'
+        type: choice
+        options:
+          - '6.6'
+          - '6.10'
+          - '6.12'
       manual:
         description: '手动触发一次编译'
 
@@ -16,6 +25,8 @@ env:
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
+  # 从 workflow_dispatch 输入设置默认内核版本
+  KERNEL_VERSION: ${{ github.event.inputs.kernel }}
 
 jobs:
   build:
@@ -44,7 +55,7 @@ jobs:
         git clone $REPO_URL -b $REPO_BRANCH openwrt
         ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
         
-    - name: 加载自定义
+    - name: 加载自定义 op1.sh
       run: |
         chmod +x $DIY_P1_SH
         cd openwrt
@@ -65,12 +76,15 @@ jobs:
     - name: 安装订阅源
       run: cd openwrt && ./scripts/feeds install -a  
 
-    - name: 加载自定义配置
+    - name: 加载自定义配置 op2.sh
       run: |
         [ -e files ] && mv files openwrt/files
         [ -e $CONFIG_FILE ] && mv $CONFIG_FILE openwrt/.config
         chmod +x $DIY_P2_SH
         cd openwrt
+        # 把选择的内核版本传给 op2.sh
+        export KERNEL_VERSION="${{ github.event.inputs.kernel }}"
+        echo "使用内核版本: $KERNEL_VERSION"
         $GITHUB_WORKSPACE/$DIY_P2_SH      
         
     - name: 下载软件
