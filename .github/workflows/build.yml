@@ -24,17 +24,17 @@ jobs:
       TZ: Asia/Shanghai
 
     steps:
-      - name: 🧹 Full system cleanup before build
+      - name: 🧹 Safe system cleanup before build
         run: |
           echo "🚧 Cleaning runner environment to free space..."
-          sudo rm -rf /home/runner/* || true
+          # 不要删除 /home/runner/work，否则会中断 workflow
+          sudo rm -rf /tmp/* || true
+          sudo rm -rf /var/lib/apt/lists/* || true
           sudo docker system prune -af || true
           sudo apt-get clean || true
-          sudo rm -rf /usr/local/lib/android || true
-          sudo rm -rf /opt/ghc || true
-          sudo rm -rf /opt/hostedtoolcache || true
-          sudo rm -rf /home/runner/actions-runner/cached || true
+          sudo rm -rf /usr/local/lib/android /opt/ghc /opt/hostedtoolcache || true
           df -h
+          echo "✅ Cleanup done."
 
       - name: 📦 Checkout repo
         uses: actions/checkout@v4
@@ -47,10 +47,13 @@ jobs:
       - name: 🧰 Install dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential gcc g++ git wget curl unzip python3 zstd rsync libncurses5-dev gawk gettext libssl-dev xsltproc file bzip2 ccache
+          sudo apt install -y build-essential gcc g++ git wget curl unzip \
+            python3 zstd rsync libncurses5-dev gawk gettext \
+            libssl-dev xsltproc file bzip2 ccache
 
       - name: 🗄️ Setup tmpfs build directory
         run: |
+          echo "🧩 Mounting tmpfs (8G) for faster build..."
           sudo mkdir -p /mnt/workspace
           sudo mountpoint -q /mnt/workspace || sudo mount -t tmpfs -o size=8G tmpfs /mnt/workspace
           mkdir -p /mnt/workspace/build
@@ -96,6 +99,7 @@ jobs:
           echo "Kernel: $KERNEL_VERSION" >> release_notes.txt
           ls -lah >> release_notes.txt || true
           sha256sum * > checksum.sha256 || true
+
           SYSUPGRADE=$(ls *sysupgrade.bin 2>/dev/null | head -n1 || true)
           SDCARD=$(ls *sdcard.img.gz 2>/dev/null | head -n1 || true)
           if [ -n "$SYSUPGRADE" ]; then
